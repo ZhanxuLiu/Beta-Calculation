@@ -1,0 +1,99 @@
+library(quantmod)
+library(shiny)
+library(PerformanceAnalytics)
+library(tidyquant)
+library(tibble)
+library(devtools)
+
+
+ui<- fluidPage(
+  titlePanel(h1("CAPM MODELLING By Z.Liu")),
+  wellPanel(selectInput(inputId = "Intervals",label="Choose a return period",list("daily","weekly","monthly","quarterly","yearly")), #select periodacity 
+  selectInput(inputId = "Index",label="Choose an index",list("^GSPC","^DJI","^IXIC")), # Select Index
+  textInput(inputId = "stocks",label = "Enter the code of the company"),
+  submitButton("Confirm")),
+  plotOutput(outputId = c("reg")),
+  plotOutput(outputId = "Returns"),
+  textOutput(outputId = "beta"),
+  textOutput(outputId="R_squared"),
+  p("This app is designed to estimate how Yahoo Finance calculates the Beta of certain stock.According to my calculation, 
+    the closet result appears when", code("3-year")," historical data with,", code("monthly returns"), "are applied."),
+  p("The reason why there is a tiny difference to Yahoo finance's Beta is that",code("the missing values in the database is filled with the next available observation by me."))
+  
+)
+
+server<- function(input,output){
+  #plotting
+  output$reg<- renderPlot(
+    {Index <- tq_get(input$Index, get = "stock.prices", from = Sys.Date()-365*3, to = Sys.Date())%>%subset(,c(date,adjusted))
+  
+  Asset <- tq_get(input$stocks, get = "stock.prices", from = Sys.Date()-365*3, to = Sys.Date())%>%subset(,c(date,adjusted))
+  
+  combine<-left_join(Asset,Index,by="date")
+  colnames(combine)<- c("Date","Asset", "Index")
+  combine$Index<-na.locf(combine$Index, fromLast = TRUE) #SP500 join the BMW fill the NAs with next observation
+  combine_xts<-xts(combine[,2:3], order.by = as.Date(combine$Date))
+  ra<- periodReturn(combine_xts$Asset,period=input$Intervals)#Ra return of asset
+  rb<- periodReturn(combine_xts$Index,period=input$Intervals) #Rb return of bench market
+  plot(x=index(combine_xts),format = "%Y-%m",y=combine_xts$Asset,xlab="time",ylab="price:$",main=input$stocks)# Draw the scatterplot
+  abline(reg=lm(combine_xts$Asset~index(combine_xts)),col="red",lwd=1)# Draw a regression line
+  legend("topleft",bty="n",text.col="red",legend=paste("R^2 is",summary(lm(combine_xts$Asset~index(combine_xts)))$r.squared%>%format(,digits=4)))
+  
+  })
+  
+  #Plotting returns
+  output$Returns<- renderPlot({
+    Index <- tq_get(input$Index, get = "stock.prices", from = Sys.Date()-365*3, to = Sys.Date())%>%subset(,c(date,adjusted))
+ 
+    Asset <- tq_get(input$stocks, get = "stock.prices", from = Sys.Date()-365*3, to = Sys.Date())%>%subset(,c(date,adjusted))
+    
+    combine<-left_join(Asset,Index,by="date")
+    colnames(combine)<- c("Date","Asset", "Index")
+    combine$Index<-na.locf(combine$Index, fromLast = TRUE) #SP500 join the BMW fill the NAs with next observation
+    combine_xts<-xts(combine[,2:3], order.by = as.Date(combine$Date))
+    ra<- periodReturn(combine_xts$Asset,period=input$Intervals)#Ra return of asset
+    rb<- periodReturn(combine_xts$Index,period=input$Intervals) #Rb return of bench market
+    ra_data<-data.frame(return=as.matrix(ra), date=time(ra))
+    rb_data<-data.frame(return=as.matrix(rb), date=time(rb))
+    plot(x=ra_data[,1],y=rb_data[,1],xlab="Return of asset",ylab="Return of market",main=input$stocks)# Draw the scatterplot
+    abline(reg=lm(rb_data[,1]~ra_data[,1]),col="green",lwd=2,lty=2)
+    legend("topleft",bty="n",text.col="red",legend=paste("R^2 is",summary(lm(rb_data[,1]~ra_data[,1]))$r.squared%>%format(,digits=4)))# Draw a regression line
+    legend("bottomright",bty="n",text.col="red",legend=paste("The Beta of", input$stocks,"is", CAPM.beta(ra,rb,Rf=0.0045)%>%format(,digits=4)))
+    
+  })
+ 
+  # Beta output
+#   output$beta<- renderText({
+#     Index <- tq_get(input$Index, get = "stock.prices", from = Sys.Date()-365*3, to = Sys.Date())%>%subset(,c(date,adjusted))
+#     
+#     Asset <- tq_get(input$stocks, get = "stock.prices", from = Sys.Date()-365*3, to = Sys.Date())%>%subset(,c(date,adjusted))
+#     
+#     combine<-left_join(Asset,Index,by="date")
+#     colnames(combine)<- c("Date","Asset", "Index")
+#     combine$Index<-na.locf(combine$Index, fromLast = TRUE) #SP500 join the BMW fill the NAs with next observation
+#     combine_xts<-xts(combine[,2:3], order.by = as.Date(combine$Date))
+#     ra<- periodReturn(combine_xts$Asset,period=input$Intervals)#Ra return of asset
+#   rb<- periodReturn(combine_xts$Index,period=input$Intervals) #Rb return of bench market
+#   
+#   print(c("The Beta of", input$stocks,"is", CAPM.beta(ra,rb,Rf=0.0045)%>%format(,digits=4)))
+#   }
+# )
+}
+
+shinyApp(ui=ui,server=server)
+  
+# R_squared output
+# output$R_squared<- renderText({Index <- tq_get(input$Index, get = "stock.prices", from = Sys.Date()-365*3, to = Sys.Date())%>%subset(,c(date,adjusted))
+# 
+#   Asset <- tq_get(input$stocks, get = "stock.prices", from = Sys.Date()-365*3, to = Sys.Date())%>%subset(,c(date,adjusted))
+# 
+#   combine<-left_join(Asset,Index,by="date")
+#   colnames(combine)<- c("Date","Asset", "Index")
+#   combine$Index<-na.locf(combine$Index, fromLast = TRUE) #SP500 join the BMW fill the NAs with next observation
+#   combine_xts<-xts(combine[,2:3], order.by = as.Date(combine$Date))
+# 
+#   print(c("The adjusted R^2 of ", input$stocks,"and", input$Index,"is",
+#           summary(lm(combine_xts$Asset~index(combine_xts)))$r.squared%>%format(,digits=4)))})}
+
+ 
+
